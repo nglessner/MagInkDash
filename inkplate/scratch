@@ -1,0 +1,130 @@
+/**
+ * @brief       drawPngFromWeb function draws png image from web
+ *
+ * @param       char *url
+ *              pointer to png file
+ * @param       int x
+ *              x position for top left image corner
+ * @param       int y
+ *              y position for top left image corner
+ * @param       bool dither
+ *              1 if using dither, 0 if not
+ * @param       bool invert
+ *              1 if using invert, 0 if not
+ *
+ * @return      1 if drawn successfully, 0 if not
+ */
+bool Image::drawPngFromWeb(const char *url, int x, int y, bool dither, bool invert)
+{
+    _pngDither = dither;
+    _pngInvert = invert;
+    lastY = y;
+
+    bool ret = 1;
+
+    if (dither)
+        memset(ditherBuffer, 0, sizeof ditherBuffer);
+
+    pngle_t *pngle = pngle_new();
+    _pngX = x;
+    _pngY = y;
+    pngle_set_draw_callback(pngle, pngle_on_draw);
+
+    int32_t defaultLen = E_INK_WIDTH * E_INK_HEIGHT * 8 + 100;
+    uint8_t *buf = 0;
+
+    if (strncmp(url, "http://", 7) == 0)
+    {
+        buf = downloadFile(url, &defaultLen);
+    }
+    else if (strncmp(url, "https://", 8) == 0)
+    {
+        buf = downloadFileHTTPS(url, &defaultLen);
+    }
+
+    if (!buf)
+        return 0;
+
+    if (pngle_feed(pngle, buf, defaultLen) < 0)
+        ret = 0;
+
+    pngle_destroy(pngle);
+    free(buf);
+    return ret;
+}
+
+
+/**
+ * @brief       Download a file via HTTP
+ *
+ * @param       char *url
+ *              pointer to URL link that holds file
+ *
+ * @param       uint32_t *defaultLen
+ *              Pointer that holds assumed length of file in bytes, will be
+ *              checked before download
+ *
+ * @return      pointer to buffer that holds downloaded file
+ */
+uint8_t *NetworkClient::downloadFile(const char *url, int32_t *defaultLen)
+{
+    if (!isConnected())
+        return NULL;
+
+    bool sleep = WiFi.getSleep();
+    WiFi.setSleep(false);
+
+    HTTPClient http;
+    http.getStream().setNoDelay(true);
+    http.getStream().setTimeout(1);
+
+    // Set the 'follow redirects' option
+    // Default is HTTPC_DISABLE_FOLLOW_REDIRECTS
+    http.setFollowRedirects(followRedirects);
+
+    // Connect with HTTP
+    http.begin(url);
+
+    int httpCode = http.GET();
+
+    int32_t size = http.getSize();
+    if (size == -1)
+        size = *defaultLen;
+    else
+        *defaultLen = size;
+
+    uint8_t *buffer = (uint8_t *)ps_malloc(size);
+    uint8_t *buffPtr = buffer;
+
+    if (httpCode == HTTP_CODE_OK)
+    {
+        int32_t total = http.getSize();
+        int32_t len = total;
+
+        uint8_t buff[512] = {0};
+
+        WiFiClient *stream = http.getStreamPtr();
+        while (http.connected() && (len > 0 || len == -1))
+        {
+            size_t size = stream->available();
+
+            if (size)
+            {
+                int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
+                memcpy(buffPtr, buff, c);
+
+                if (len > 0)
+                    len -= c;
+                buffPtr += c;
+            }
+            else if (len == -1)
+            {
+                len = 0;
+            }
+        }
+    }
+    http.end();
+    WiFi.setSleep(sleep);
+
+    return buffer;
+}
